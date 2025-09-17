@@ -72,6 +72,8 @@ git submodule update --init --recursive
 
 Or, configure git so that git pull always recurses into submodules.
 
+Then,
+
 ```bash
 make
 make install
