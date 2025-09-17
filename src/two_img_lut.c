@@ -1,4 +1,4 @@
-// Last Change: 2025-09-17  Wednesday: 02:22:22 PM
+// Last Change: 2025-09-17  Wednesday: 03:20:36 PM
 // two_img_lut.c
 
 /*
@@ -12,7 +12,7 @@
 
    Permission is hereby granted, free of charge, to any person obtaining a copy
    of this software and associated documentation files (the "Software"), to deal
-   in the Software without restriction, including without limitation the rights
+   in the Software without restriction, including, without limitation, the rights
    to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
    copies of the Software, and to permit persons to whom the Software is
    furnished to do so, subject to the following conditions:
@@ -116,7 +116,7 @@ int main(int argc, char *argv[]) {
 
   if(clock_gettime(CLOCK_MONOTONIC, &t_start) != 0) {
     perror("clock_gettime (start)");
-    // Could continue but timing might be off
+    // Could continue, but timing might be off
   }
 
   // Load images, etc.
@@ -160,7 +160,7 @@ int main(int argc, char *argv[]) {
     lut[i].w = 0.0;
   }
 
-  // (Your accumulate / normalize / fill missing / write cube code goes here…)
+  // (Your accumulate / normalise / fill missing / write cube code goes here…)
   // Accumulate over all pixels
   for(int y = 0; y < hA; y++) {
     for(int x = 0; x < wA; x++) {
@@ -235,7 +235,7 @@ int main(int argc, char *argv[]) {
     }
   }
 
-  // Fill missing cells by nearest neighbor
+  // Fill missing cells by nearest neighbour
   // For each missing cell, search outward in 3D for a filled one
   // (Simple brute force search)
   for(int i = 0; i < N; i++) {
@@ -377,4 +377,5 @@ int main(int argc, char *argv[]) {
 
   return 0;
 }
+
 
