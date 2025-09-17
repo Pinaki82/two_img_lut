@@ -48,175 +48,222 @@
   #error "This program currently supports only Linux"
 #endif
 
-#ifdef _OPENMP
-#pragma omp parallel shared(A, B, C, N) num_threads(4)
-#endif
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
 #include <string.h>
 #include <time.h>
-#include <omp.h>
 
-// stb_image, stb_image_write, lutgen etc.
-// Replace with your image loading library, e.g. stb_image
+#ifdef _OPENMP
+  #include <omp.h>
+#endif
+
+// stb_image - single-translation-unit usage
 #define STB_IMAGE_IMPLEMENTATION
 #include "external/stb/stb_image.h"
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "external/stb/stb_image_write.h"
-#include "lutgen.h"
-
-#define INIT_THREADS() omp_set_num_threads(4)
 
 #define DEFAULT_LUT_SIZE 129
-#define MAX_FILL_RADIUS 3 // Limit BFS search radius
+#define MAX_FILL_RADIUS 3 /* kept for config, not used in BFS */
 
-#define LUT_SIZE 129  // Define macro with a unique name
-#define N 129  // LUT size
-#define MAX_QUEUE_SIZE (N * N * N)
-
-static int clamp_int(int x, int lo, int hi);
-void bfs_fill(Cell *lut);
-
+// Cell stored as floats for memory efficiency and speed
 typedef struct {
-  float r, g, b;
-  double w;
+  float r, g, b; /* accumulated (or averaged) color */
+  double w;      /* accumulated weight */
 } Cell;
 
+/* coordinate triple */
 typedef struct {
   int i, j, k;
 } Coord;
 
+/* circular queue of Coord */
 typedef struct {
   Coord *data;
-  int front, rear, capacity;
+  size_t head, tail, capacity;
 } Queue;
 
-static int clamp_int(int x, int lo, int hi) {
-  if(x < lo) {
-    return lo;
-  }
-
-  if(x > hi) {
-    return hi;
-  }
-
-  return x;
-}
-
-Queue *create_queue(int capacity) {
+static Queue *queue_create(size_t capacity) {
   Queue *q = malloc(sizeof(Queue));
+
+  if(!q) {
+    return NULL;
+  }
+
   q->data = malloc(sizeof(Coord) * capacity);
-  q->front = q->rear = 0;
+
+  if(!q->data) {
+    free(q);
+    return NULL;
+  }
+
+  q->head = q->tail = 0;
   q->capacity = capacity;
   return q;
 }
 
-int is_empty(Queue *q) {
-  return q->front == q->rear;
-}
-
-void enqueue(Queue *q, Coord c) {
-  if((q->rear + 1) % q->capacity != q->front) {
-    q->data[q->rear] = c;
-    q->rear = (q->rear + 1) % q->capacity;
-  }
-}
-
-Coord dequeue(Queue *q) {
-  Coord c = {-1, -1, -1};
-
-  if(!is_empty(q)) {
-    c = q->data[q->front];
-    q->front = (q->front + 1) % q->capacity;
+static void queue_free(Queue *q) {
+  if(!q) {
+    return;
   }
 
-  return c;
+  free(q->data);
+  free(q);
 }
 
-void bfs_fill(Cell *lut) {
-  int total = N * N * N;
-  int *visited = (int *)malloc(total * sizeof(int));
-  memset(visited, 0, total * sizeof(int));
-  #pragma omp parallel
-  {
-    Queue *q = create_queue(MAX_QUEUE_SIZE);
-    #pragma omp for
+static int queue_is_empty(const Queue *q) {
+  return q->head == q->tail;
+}
 
-    for(int i = 0; i < total; i++) {
-      if(lut[i].r >= 0.0) {
-        visited[i] = 1;
-        enqueue(q, (Coord) {
-          i / (N * N), (i / N) % N, i % N
-        });
-      }
-    }
+/* returns 1 on success, 0 if full */
+static int queue_push(Queue *q, Coord c) {
+  size_t next = (q->tail + 1) % q->capacity;
 
-    int di[] = {-1, 1, 0, 0, 0, 0};
-    int dj[] = {0, 0, -1, 1, 0, 0};
-    int dk[] = {0, 0, 0, 0, -1, 1};
+  if(next == q->head) {
+    return 0;  /* full */
+  }
 
-    while(!is_empty(q)) {
-      Coord c = dequeue(q);
+  q->data[q->tail] = c;
+  q->tail = next;
+  return 1;
+}
 
-      for(int d = 0; d < 6; d++) {
-        int ni = c.i + di[d];
-        int nj = c.j + dj[d];
-        int nk = c.k + dk[d];
+/* returns 1 on success (pop), 0 if empty */
+static int queue_pop(Queue *q, Coord *out) {
+  if(queue_is_empty(q)) {
+    return 0;
+  }
 
-        if(ni >= 0 && ni < N && nj >= 0 && nj < N && nk >= 0 && nk < N) {
-          int idx = ((ni * N + nj) * N + nk);
+  *out = q->data[q->head];
+  q->head = (q->head + 1) % q->capacity;
+  return 1;
+}
 
-          if(!visited[idx]) {
-            visited[idx] = 1;
-            lut[idx].r = lut[((c.i * N + c.j) * N + c.k)].r;
-            lut[idx].g = lut[((c.i * N + c.j) * N + c.k)].g;
-            lut[idx].b = lut[((c.i * N + c.j) * N + c.k)].b;
-            enqueue(q, (Coord) {
-              ni, nj, nk
-            });
-          }
+/* multi-source BFS fill that averages already-filled neighbours */
+static void bfs_fill(Cell *lut, int N) {
+  size_t total = (size_t)N * N * N;
+  unsigned char *visited = calloc(total, 1);
+
+  if(!visited) {
+    return;
+  }
+
+  Queue *q = queue_create(total + 16);
+
+  if(!q) {
+    free(visited);
+    return;
+  }
+
+  /* enqueue every already-filled cell (marker: r >= 0) */
+  for(int i = 0; i < N; ++i) {
+    for(int j = 0; j < N; ++j) {
+      for(int k = 0; k < N; ++k) {
+        size_t idx = ((size_t)i * N + (size_t)j) * N + (size_t)k;
+
+        if(lut[idx].r >= 0.0f) {
+          visited[idx] = 1;
+          queue_push(q, (Coord) {
+            i, j, k
+          });
         }
       }
     }
-
-    free(q->data);
-    free(q);
   }
+
+  const int di[6] = {+1, -1, 0, 0, 0, 0};
+  const int dj[6] = { 0, 0, +1, -1, 0, 0};
+  const int dk[6] = { 0, 0, 0, 0, +1, -1};
+  Coord cur;
+
+  while(queue_pop(q, &cur)) {
+    size_t cur_idx = ((size_t)cur.i * N + (size_t)cur.j) * N + (size_t)cur.k;
+
+    for(int n = 0; n < 6; ++n) {
+      int ni = cur.i + di[n];
+      int nj = cur.j + dj[n];
+      int nk = cur.k + dk[n];
+
+      if(ni < 0 || ni >= N || nj < 0 || nj >= N || nk < 0 || nk >= N) {
+        continue;
+      }
+
+      size_t nidx = ((size_t)ni * N + (size_t)nj) * N + (size_t)nk;
+
+      if(visited[nidx]) {
+        continue;
+      }
+
+      /* compute average of already-filled neighbours of (ni,nj,nk) */
+      double sr = 0.0, sg = 0.0, sb = 0.0;
+      int count = 0;
+
+      for(int m = 0; m < 6; ++m) {
+        int mi = ni + di[m], mj = nj + dj[m], mk = nk + dk[m];
+
+        if(mi < 0 || mi >= N || mj < 0 || mj >= N || mk < 0 || mk >= N) {
+          continue;
+        }
+
+        size_t midx = ((size_t)mi * N + (size_t)mj) * N + (size_t)mk;
+
+        if(lut[midx].r >= 0.0f) {
+          sr += lut[midx].r;
+          sg += lut[midx].g;
+          sb += lut[midx].b;
+          ++count;
+        }
+      }
+
+      if(count > 0) {
+        lut[nidx].r = (float)(sr / count);
+        lut[nidx].g = (float)(sg / count);
+        lut[nidx].b = (float)(sb / count);
+      }
+
+      else {
+        /* fallback: copy from current (rare) */
+        lut[nidx].r = lut[cur_idx].r;
+        lut[nidx].g = lut[cur_idx].g;
+        lut[nidx].b = lut[cur_idx].b;
+      }
+
+      visited[nidx] = 1;
+      queue_push(q, (Coord) {
+        ni, nj, nk
+      });
+    }
+  }
+
+  queue_free(q);
   free(visited);
 }
 
 int main(int argc, char *argv[]) {
-  const char *pathA, *pathB, *outcube;
-  int N = DEFAULT_LUT_SIZE;  // Default LUT size
+  const char *pathA = NULL, *pathB = NULL, *outcube = NULL;
+  int lut_size = DEFAULT_LUT_SIZE;
 
   if(argc == 4) {
-    // no explicit lut size; use default
     pathA = argv[1];
     pathB = argv[2];
-    // N = DEFAULT_LUT_SIZE;   // now 129 by default
-    int lut_size = DEFAULT_LUT_SIZE;
     outcube = argv[3];
   }
 
   else if(argc == 5) {
     pathA = argv[1];
     pathB = argv[2];
-    N = atoi(argv[3]);  // N is initialized here
+    lut_size = atoi(argv[3]);
     outcube = argv[4];
   }
 
   else {
-    fprintf(stderr,
-            "Usage: %s source.png target.png [lut_size] output.cube\n",
-            argv[0]);
-    printf("lut_size must be between 2 and 129\n");
+    fprintf(stderr, "Usage: %s source.png target.png [lut_size] output.cube\n", argv[0]);
     return 1;
   }
 
-  if(N < 2 || N > 129) {
-    fprintf(stderr, "Error: lut_size must be between 2 and 129 (you passed %d)\n", N);
+  if(lut_size < 2 || lut_size > 2000) {
+    fprintf(stderr, "Error: lut_size must be >=2 and reasonably small (you passed %d)\n", lut_size);
     return 1;
   }
 
@@ -224,10 +271,8 @@ int main(int argc, char *argv[]) {
 
   if(clock_gettime(CLOCK_MONOTONIC, &t_start) != 0) {
     perror("clock_gettime (start)");
-    // Could continue, but timing might be off
   }
 
-  // Load images, etc.
   int wA, hA, chA;
   unsigned char *dataA = stbi_load(pathA, &wA, &hA, &chA, 3);
 
@@ -247,43 +292,46 @@ int main(int argc, char *argv[]) {
 
   if(wA != wB || hA != hB) {
     fprintf(stderr, "Source and target image sizes do not match\n");
-    stbi_image_free(dataA);
-    stbi_image_free(dataB);
+    stbi_image_free(dataA); stbi_image_free(dataB);
     return 1;
   }
 
-  // Allocate and zero out LUT cells
-  size_t total = (size_t)N * N * N;
-  Cell *lut = (Cell *) malloc(total * sizeof(Cell));
+  size_t total = (size_t)lut_size * lut_size * lut_size;
+  Cell *lut = malloc(total * sizeof(Cell));
 
   if(!lut) {
-    fprintf(stderr, "Out of memory allocating LUT\n");
+    fprintf(stderr, "Out of memory allocating LUT (%zu cells)\n", total);
     stbi_image_free(dataA);
     stbi_image_free(dataB);
     return 1;
   }
 
-  for(size_t i = 0; i < total; i++) {
-    lut[i].r = lut[i].g = lut[i].b = 0.0;
+  /* INITIALIZE accumulators TO ZERO (important!) */
+  for(size_t i = 0; i < total; ++i) {
+    lut[i].r = 0.0f;
+    lut[i].g = 0.0f;
+    lut[i].b = 0.0f;
     lut[i].w = 0.0;
   }
 
-  // (Your accumulate / normalise / fill missing / write cube code goes here…)
-  // Accumulate over all pixels
-  for(int y = 0; y < hA; y++) {
-    for(int x = 0; x < wA; x++) {
-      int idx = (y * wA + x) * 3;
-      double rA = dataA[idx] / 255.0;
-      double gA = dataA[idx + 1] / 255.0;
-      double bA = dataA[idx + 2] / 255.0;
-      double rB = dataB[idx] / 255.0;
-      double gB = dataB[idx + 1] / 255.0;
-      double bB = dataB[idx + 2] / 255.0;
-      // After writing the cube file, free memory
-      // map A colour to LUT space
-      double fi = rA * (N - 1);
-      double fj = gA * (N - 1);
-      double fk = bA * (N - 1);
+  /* Accumulate: distribute each pixel's target colour into up to 8 surrounding LUT cells.
+     Parallelized with OpenMP if available; uses atomic updates on cell accumulators. */
+#if defined(_OPENMP)
+  #pragma omp parallel for schedule(dynamic)
+#endif
+
+  for(int y = 0; y < hA; ++y) {
+    for(int x = 0; x < wA; ++x) {
+      int idx_px = (y * wA + x) * 3;
+      double rA = dataA[idx_px + 0] / 255.0;
+      double gA = dataA[idx_px + 1] / 255.0;
+      double bA = dataA[idx_px + 2] / 255.0;
+      double rB = dataB[idx_px + 0] / 255.0;
+      double gB = dataB[idx_px + 1] / 255.0;
+      double bB = dataB[idx_px + 2] / 255.0;
+      double fi = rA * (lut_size - 1);
+      double fj = gA * (lut_size - 1);
+      double fk = bA * (lut_size - 1);
       int i0 = (int)floor(fi);
       int j0 = (int)floor(fj);
       int k0 = (int)floor(fk);
@@ -291,131 +339,74 @@ int main(int argc, char *argv[]) {
       double dj = fj - j0;
       double dk = fk - k0;
 
-      for(int dii = 0; dii <= 1; dii++) {
+      for(int dii = 0; dii <= 1; ++dii) {
         int ii = i0 + dii;
 
-        if(ii < 0 || ii >= N) {
+        if(ii < 0 || ii >= lut_size) {
           continue;
         }
 
         double wi = (dii == 0) ? (1.0 - di) : di;
 
-        for(int djj = 0; djj <= 1; djj++) {
+        for(int djj = 0; djj <= 1; ++djj) {
           int jj = j0 + djj;
 
-          if(jj < 0 || jj >= N) {
+          if(jj < 0 || jj >= lut_size) {
             continue;
           }
 
           double wj = (djj == 0) ? (1.0 - dj) : dj;
 
-          for(int dkk = 0; dkk <= 1; dkk++) {
+          for(int dkk = 0; dkk <= 1; ++dkk) {
             int kk = k0 + dkk;
 
-            if(kk < 0 || kk >= N) {
+            if(kk < 0 || kk >= lut_size) {
               continue;
             }
 
             double wk = (dkk == 0) ? (1.0 - dk) : dk;
             double w = wi * wj * wk;
-            size_t cell_index = ((ii * N + jj) * N + kk);
-            lut[cell_index].r += rB * w;
-            lut[cell_index].g += gB * w;
-            lut[cell_index].b += bB * w;
+            size_t cell_index = ((size_t)ii * lut_size + (size_t)jj) * lut_size + (size_t)kk;
+            /* atomic adds to preserve correctness when parallelized */
+#if defined(_OPENMP)
+            #pragma omp atomic
+#endif
             lut[cell_index].w += w;
+#if defined(_OPENMP)
+            #pragma omp atomic
+#endif
+            lut[cell_index].r += (float)(rB * w);
+#if defined(_OPENMP)
+            #pragma omp atomic
+#endif
+            lut[cell_index].g += (float)(gB * w);
+#if defined(_OPENMP)
+            #pragma omp atomic
+#endif
+            lut[cell_index].b += (float)(bB * w);
           }
         }
       }
     }
-  }
+  } /* end accumulation */
 
-  // Normalize (average) cells
-  for(size_t i = 0; i < total; i++) {
+  /* Normalize: convert accumulated sums into average RGB and mark missing cells with -1 */
+  for(size_t i = 0; i < total; ++i) {
     if(lut[i].w > 0.0) {
-      lut[i].r /= lut[i].w;
-      lut[i].g /= lut[i].w;
-      lut[i].b /= lut[i].w;
+      lut[i].r = (float)(lut[i].r / lut[i].w);
+      lut[i].g = (float)(lut[i].g / lut[i].w);
+      lut[i].b = (float)(lut[i].b / lut[i].w);
     }
 
     else {
-      // mark missing by setting to negative
-      lut[i].r = lut[i].g = lut[i].b = -1.0;
+      /* missing marker */
+      lut[i].r = lut[i].g = lut[i].b = -1.0f;
     }
   }
 
-  // Fill missing cells by nearest neighbour
-  // For each missing cell, search outward in 3D for a filled one
-  // (Simple brute force search)
-  for(int i = 0; i < N; i++) {
-    for(int j = 0; j < N; j++) {
-      for(int k = 0; k < N; k++) {
-        size_t ci = ((i * N + j) * N + k);
-
-        if(lut[ci].r >= 0.0) {
-          continue;  // already filled
-        }
-
-        // search radius
-        int maxr = N;  // up to whole cube
-        int best_i = -1, best_j = -1, best_k = -1;
-        double best_dist = 1e30;
-
-        for(int dii = -maxr; dii <= maxr; dii++) {
-          int ii = i + dii;
-
-          if(ii < 0 || ii >= N) {
-            continue;
-          }
-
-          for(int djj = -maxr; djj <= maxr; djj++) {
-            int jj = j + djj;
-
-            if(jj < 0 || jj >= N) {
-              continue;
-            }
-
-            for(int dkk = -maxr; dkk <= maxr; dkk++) {
-              int kk = k + dkk;
-
-              if(kk < 0 || kk >= N) {
-                continue;
-              }
-
-              size_t ci2 = ((ii * N + jj) * N + kk);
-
-              if(lut[ci2].r < 0.0) {
-                continue;  // still missing
-              }
-
-              // distance in cell space
-              double dist = dii * dii + djj * djj + dkk * dkk;
-
-              if(dist < best_dist) {
-                best_dist = dist;
-                best_i = ii; best_j = jj; best_k = kk;
-              }
-            }
-          }
-        }
-
-        if(best_i >= 0) {
-          size_t ci2 = ((best_i * N + best_j) * N + best_k);
-          lut[ci].r = lut[ci2].r;
-          lut[ci].g = lut[ci2].g;
-          lut[ci].b = lut[ci2].b;
-        }
-
-        else {
-          // fallback: set to identity
-          lut[ci].r = i / (double)(N - 1);
-          lut[ci].g = j / (double)(N - 1);
-          lut[ci].b = k / (double)(N - 1);
-        }
-      }
-    }
-  }
-
-  // Write .cube file
+  /* Fill holes using multi-source BFS averaging */
+  bfs_fill(lut, lut_size);
+  /* Write .cube file (ASCII) */
   FILE *f = fopen(outcube, "w");
 
   if(!f) {
@@ -426,32 +417,56 @@ int main(int argc, char *argv[]) {
     return 1;
   }
 
-  fprintf(f, "# Generated by lutgen\n");
+  fprintf(f, "# Generated by two_img_lut\n");
   fprintf(f, "TITLE \"Generated LUT from %s -> %s\"\n", pathA, pathB);
-  fprintf(f, "LUT_3D_SIZE %d\n", N);
+  fprintf(f, "LUT_3D_SIZE %d\n", lut_size);
   fprintf(f, "DOMAIN_MIN 0.0 0.0 0.0\n");
   fprintf(f, "DOMAIN_MAX 1.0 1.0 1.0\n");
 
-  // Order: r fastest, then g, then b (common ordering)
-  for(int b = 0; b < N; b++) {
-    for(int g = 0; g < N; g++) {
-      for(int r = 0; r < N; r++) {
-        size_t ci = ((r * N + g) * N + b);
+  /* cube ordering: r fastest, then g, then b (common) */
+  for(int b = 0; b < lut_size; ++b) {
+    for(int g = 0; g < lut_size; ++g) {
+      for(int r = 0; r < lut_size; ++r) {
+        size_t ci = ((size_t)r * lut_size + (size_t)g) * lut_size + (size_t)b;
         double orr = lut[ci].r;
         double ogg = lut[ci].g;
         double obb = lut[ci].b;
 
-        // clamp
         if(orr < 0.0) {
-          orr = r / (double)(N - 1);
+          orr = r / (double)(lut_size - 1);
         }
 
         if(ogg < 0.0) {
-          ogg = g / (double)(N - 1);
+          ogg = g / (double)(lut_size - 1);
         }
 
         if(obb < 0.0) {
-          obb = b / (double)(N - 1);
+          obb = b / (double)(lut_size - 1);
+        }
+
+        /* clamp (defensive) */
+        if(orr < 0.0) {
+          orr = 0.0;
+        }
+
+        if(ogg < 0.0) {
+          ogg = 0.0;
+        }
+
+        if(obb < 0.0) {
+          obb = 0.0;
+        }
+
+        if(orr > 1.0) {
+          orr = 1.0;
+        }
+
+        if(ogg > 1.0) {
+          ogg = 1.0;
+        }
+
+        if(obb > 1.0) {
+          obb = 1.0;
         }
 
         fprintf(f, "%.6f %.6f %.6f\n", orr, ogg, obb);
@@ -460,12 +475,10 @@ int main(int argc, char *argv[]) {
   }
 
   fclose(f);
-  // Cleanup
   free(lut);
   stbi_image_free(dataA);
   stbi_image_free(dataB);
 
-  // End timing
   if(clock_gettime(CLOCK_MONOTONIC, &t_end) != 0) {
     perror("clock_gettime (end)");
   }
@@ -480,7 +493,7 @@ int main(int argc, char *argv[]) {
     }
 
     double elapsed = (double)sec + (double)nsec / 1e9;
-    printf("Elapsed time: %.3f seconds\n", elapsed);
+    printf("Wrote %s (LUT size %d). Elapsed time: %.3f s\n", outcube, lut_size, elapsed);
   }
 
   return 0;
