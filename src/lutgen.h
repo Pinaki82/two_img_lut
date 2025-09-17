@@ -1,3 +1,4 @@
+// Last Change: 2025-09-17  Wednesday: 03:21:50 PM
 #ifndef LUTGEN_H
 #define LUTGEN_H
 
@@ -44,7 +45,7 @@ int generate_lut(
 );
 
 /**
-   Normalize a LUT: for each cell, divide accumulated sums by weight.
+   Normalise a LUT: for each cell, divide accumulated sums by weight.
    Cells with zero weight are set to some marker (e.g. negative).
 */
 void normalize_lut(
@@ -53,7 +54,7 @@ void normalize_lut(
 );
 
 /**
-   Fill missing cells in LUT (cells with no data) via nearest neighbor or other method.
+   Fill missing cells in LUT (cells with no data) via nearest neighbour or other method.
 */
 void fill_lut_missing_cells(
         LUTCell *lut,
@@ -64,7 +65,7 @@ void fill_lut_missing_cells(
    Write LUT to .cube file.
 
    Parameters:
-     lut: array of LUTCell (normalized)
+     lut: array of LUTCell (normalised)
      lut_size: size N
      filename: output path
 
@@ -81,4 +82,5 @@ int write_cube_lut(
 #endif
 
 #endif // LUTGEN_H
+
 
