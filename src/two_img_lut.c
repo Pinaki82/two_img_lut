@@ -62,7 +62,7 @@
 #include "external/stb/stb_image_write.h"
 #include "lutgen.h"
 
-#define DEFAULT_LUT_SIZE 33
+#define DEFAULT_LUT_SIZE 37
 
 typedef struct {
   double r, g, b;
