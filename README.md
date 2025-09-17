@@ -55,6 +55,7 @@ Clone the repository (if you haven’t already). You can use the --recursive fla
 
 ```bash
 git clone --recursive https://github.com/Pinaki82/two_img_lut.git
+cd two_img_lut/
 ```
 
 If you already have the repo (without submodules), then after pulling, run:
