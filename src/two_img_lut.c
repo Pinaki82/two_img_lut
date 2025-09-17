@@ -1,4 +1,4 @@
-// Last Change: 2025-09-17  Wednesday: 04:39:45 PM
+// Last Change: 2025-09-17  Wednesday: 07:46:59 PM
 // two_img_lut.c
 
 /*
@@ -142,7 +142,7 @@ static int queue_pop(Queue *q, Coord *out) {
 
 /* multi-source BFS fill that averages already-filled neighbours */
 static void bfs_fill(Cell *lut, int N) {
-  size_t total = (size_t)N * N * N;
+  size_t total = (size_t)(N * N * N);
   unsigned char *visited = calloc(total, 1);
 
   if(!visited) {
@@ -160,7 +160,7 @@ static void bfs_fill(Cell *lut, int N) {
   for(int i = 0; i < N; ++i) {
     for(int j = 0; j < N; ++j) {
       for(int k = 0; k < N; ++k) {
-        size_t idx = ((size_t)i * N + (size_t)j) * N + (size_t)k;
+        size_t idx = (size_t)((size_t)i * (size_t)N + (size_t)j) * (size_t)N + (size_t)k;
 
         if(lut[idx].r >= 0.0f) {
           visited[idx] = 1;
@@ -178,7 +178,7 @@ static void bfs_fill(Cell *lut, int N) {
   Coord cur;
 
   while(queue_pop(q, &cur)) {
-    size_t cur_idx = ((size_t)cur.i * N + (size_t)cur.j) * N + (size_t)cur.k;
+    size_t cur_idx = ((size_t)cur.i * (size_t)N + (size_t)cur.j) * (size_t)N + (size_t)cur.k;
 
     for(int n = 0; n < 6; ++n) {
       int ni = cur.i + di[n];
@@ -189,7 +189,7 @@ static void bfs_fill(Cell *lut, int N) {
         continue;
       }
 
-      size_t nidx = ((size_t)ni * N + (size_t)nj) * N + (size_t)nk;
+      size_t nidx = ((size_t)ni * (size_t)N + (size_t)nj) * (size_t)N + (size_t)nk;
 
       if(visited[nidx]) {
         continue;
@@ -206,7 +206,7 @@ static void bfs_fill(Cell *lut, int N) {
           continue;
         }
 
-        size_t midx = ((size_t)mi * N + (size_t)mj) * N + (size_t)mk;
+        size_t midx = ((size_t)mi * (size_t)N + (size_t)mj) * (size_t)N + (size_t)mk;
 
         if(lut[midx].r >= 0.0f) {
           sr += lut[midx].r;

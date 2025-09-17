@@ -32,6 +32,8 @@
 x86_64-pc-linux-gnu
 
 
+-I /external/stb
+
 -isystem /usr/include/c++/12
 -isystem /usr/include/x86_64-linux-gnu/c++/12
 -isystem /usr/include/c++/12/backward
