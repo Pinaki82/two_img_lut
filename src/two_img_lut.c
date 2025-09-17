@@ -1,4 +1,4 @@
-// Last Change: 2025-09-17  Wednesday: 03:20:36 PM
+// Last Change: 2025-09-17  Wednesday: 04:39:45 PM
 // two_img_lut.c
 
 /*
@@ -48,11 +48,16 @@
   #error "This program currently supports only Linux"
 #endif
 
+#ifdef _OPENMP
+#pragma omp parallel shared(A, B, C, N) num_threads(4)
+#endif
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
 #include <string.h>
 #include <time.h>
+#include <omp.h>
 
 // stb_image, stb_image_write, lutgen etc.
 // Replace with your image loading library, e.g. stb_image
@@ -62,12 +67,31 @@
 #include "external/stb/stb_image_write.h"
 #include "lutgen.h"
 
-#define DEFAULT_LUT_SIZE 37
+#define INIT_THREADS() omp_set_num_threads(4)
+
+#define DEFAULT_LUT_SIZE 129
+#define MAX_FILL_RADIUS 3 // Limit BFS search radius
+
+#define LUT_SIZE 129  // Define macro with a unique name
+#define N 129  // LUT size
+#define MAX_QUEUE_SIZE (N * N * N)
+
+static int clamp_int(int x, int lo, int hi);
+void bfs_fill(Cell *lut);
 
 typedef struct {
-  double r, g, b;
+  float r, g, b;
   double w;
 } Cell;
+
+typedef struct {
+  int i, j, k;
+} Coord;
+
+typedef struct {
+  Coord *data;
+  int front, rear, capacity;
+} Queue;
 
 static int clamp_int(int x, int lo, int hi) {
   if(x < lo) {
@@ -81,22 +105,105 @@ static int clamp_int(int x, int lo, int hi) {
   return x;
 }
 
+Queue *create_queue(int capacity) {
+  Queue *q = malloc(sizeof(Queue));
+  q->data = malloc(sizeof(Coord) * capacity);
+  q->front = q->rear = 0;
+  q->capacity = capacity;
+  return q;
+}
+
+int is_empty(Queue *q) {
+  return q->front == q->rear;
+}
+
+void enqueue(Queue *q, Coord c) {
+  if((q->rear + 1) % q->capacity != q->front) {
+    q->data[q->rear] = c;
+    q->rear = (q->rear + 1) % q->capacity;
+  }
+}
+
+Coord dequeue(Queue *q) {
+  Coord c = {-1, -1, -1};
+
+  if(!is_empty(q)) {
+    c = q->data[q->front];
+    q->front = (q->front + 1) % q->capacity;
+  }
+
+  return c;
+}
+
+void bfs_fill(Cell *lut) {
+  int total = N * N * N;
+  int *visited = (int *)malloc(total * sizeof(int));
+  memset(visited, 0, total * sizeof(int));
+  #pragma omp parallel
+  {
+    Queue *q = create_queue(MAX_QUEUE_SIZE);
+    #pragma omp for
+
+    for(int i = 0; i < total; i++) {
+      if(lut[i].r >= 0.0) {
+        visited[i] = 1;
+        enqueue(q, (Coord) {
+          i / (N * N), (i / N) % N, i % N
+        });
+      }
+    }
+
+    int di[] = {-1, 1, 0, 0, 0, 0};
+    int dj[] = {0, 0, -1, 1, 0, 0};
+    int dk[] = {0, 0, 0, 0, -1, 1};
+
+    while(!is_empty(q)) {
+      Coord c = dequeue(q);
+
+      for(int d = 0; d < 6; d++) {
+        int ni = c.i + di[d];
+        int nj = c.j + dj[d];
+        int nk = c.k + dk[d];
+
+        if(ni >= 0 && ni < N && nj >= 0 && nj < N && nk >= 0 && nk < N) {
+          int idx = ((ni * N + nj) * N + nk);
+
+          if(!visited[idx]) {
+            visited[idx] = 1;
+            lut[idx].r = lut[((c.i * N + c.j) * N + c.k)].r;
+            lut[idx].g = lut[((c.i * N + c.j) * N + c.k)].g;
+            lut[idx].b = lut[((c.i * N + c.j) * N + c.k)].b;
+            enqueue(q, (Coord) {
+              ni, nj, nk
+            });
+          }
+        }
+      }
+    }
+
+    free(q->data);
+    free(q);
+  }
+  free(visited);
+}
+
 int main(int argc, char *argv[]) {
   const char *pathA, *pathB, *outcube;
-  int N;
+  int N = DEFAULT_LUT_SIZE;  // Default LUT size
 
   if(argc == 4) {
     // no explicit lut size; use default
     pathA = argv[1];
     pathB = argv[2];
-    N = DEFAULT_LUT_SIZE;
+    // N = DEFAULT_LUT_SIZE;   // now 129 by default
+    int lut_size = DEFAULT_LUT_SIZE;
     outcube = argv[3];
   }
 
   else if(argc == 5) {
     pathA = argv[1];
     pathB = argv[2];
-    N = atoi(argv[3]);
+    N = atoi(argv[3]);  // N is initialized here
     outcube = argv[4];
   }
 
@@ -104,11 +211,12 @@ int main(int argc, char *argv[]) {
     fprintf(stderr,
             "Usage: %s source.png target.png [lut_size] output.cube\n",
             argv[0]);
+    printf("lut_size must be between 2 and 129\n");
     return 1;
   }
 
-  if(N < 2) {
-    fprintf(stderr, "lut_size must be >= 2 (you passed %d)\n", N);
+  if(N < 2 || N > 129) {
+    fprintf(stderr, "Error: lut_size must be between 2 and 129 (you passed %d)\n", N);
     return 1;
   }
 
