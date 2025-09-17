@@ -56,8 +56,8 @@ make
 make install
 ```
 
-This compiles the two_img_lut binary and copies it to `~/.local/bin`.
-Make sure `~/.local/bin` is in your PATH:
+This compiles the `two_img_lut binary` and copies it to `~/.local/bin`.
+Make sure `~/.local/bin` is in your `PATH`:
 
 ```bash
 export PATH="$HOME/.local/bin:$PATH"
