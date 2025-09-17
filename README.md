@@ -51,6 +51,27 @@ your-project/
 
 To build and install:
 
+Clone the repository (if you haven’t already). You can use the --recursive flag so submodules are initialised at clone time:
+
+```bash
+git clone --recursive https://github.com/Pinaki82/two_img_lut.git
+```
+
+If you already have the repo (without submodules), then after pulling, run:
+
+```bash
+git submodule update --init --recursive
+```
+
+After that, to update the main repo and submodules later, you might want to do:
+
+```bash
+git pull --recurse-submodules
+git submodule update --init --recursive
+```
+
+Or, configure git so that git pull always recurses into submodules.
+
 ```bash
 make
 make install
