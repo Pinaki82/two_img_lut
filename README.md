@@ -35,6 +35,8 @@ Generate a 3D LUT (.cube) file by comparing two images: a source image and a col
 
 Assuming your directory structure is:
 
+```css
+.
 your-project/
 ├── external/
 │ └── stb/
@@ -45,6 +47,7 @@ your-project/
 │ └── lutgen.h
 ├── Makefile
 └── README.md
+```
 
 To build and install:
 
