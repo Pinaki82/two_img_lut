@@ -2,11 +2,15 @@
 // gcc -g -std=c11 -Wall -Wextra -pedantic two_img_lut.c -o two_img_lut -lm
 // ./two_img_lut source.png target.png lut_size output.cube
 // Example: ./two_img_lut mpv-shot0001.png mpv-shot0001-corrected.png 33 00010.cube
+#define _POSIX_C_SOURCE 199309L
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
 #include <string.h>
+#include <time.h>
 
+// stb_image, stb_image_write, lutgen etc.
 // Replace with your image loading library, e.g. stb_image
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb-master/stb_image.h"
@@ -39,6 +43,13 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
+    struct timespec t_start, t_end;
+    if (clock_gettime(CLOCK_MONOTONIC, &t_start) != 0) {
+        perror("clock_gettime (start)");
+        // Could continue but timing might be off
+    }
+
+    // Load images, etc.
     int wA, hA, chA;
     unsigned char *dataA = stbi_load(pathA, &wA, &hA, &chA, 3);
     if (!dataA) {
@@ -59,7 +70,7 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    // Allocate LUT cells
+    // Allocate and zero out LUT cells
     size_t total = (size_t)N * N * N;
     Cell *lut = (Cell*) malloc(total * sizeof(Cell));
     if (!lut) {
@@ -73,6 +84,7 @@ int main(int argc, char *argv[]) {
         lut[i].w = 0.0;
     }
 
+    // (Your accumulate / normalize / fill missing / write cube code goes here…)
     // Accumulate over all pixels
     for (int y = 0; y < hA; y++) {
         for (int x = 0; x < wA; x++) {
@@ -84,7 +96,8 @@ int main(int argc, char *argv[]) {
             double gB = dataB[idx+1] / 255.0;
             double bB = dataB[idx+2] / 255.0;
 
-            // map A colour to LUT space
+    // After writing the cube file, free memory
+    // map A colour to LUT space
             double fi = rA * (N - 1);
             double fj = gA * (N - 1);
             double fk = bA * (N - 1);
@@ -219,7 +232,21 @@ int main(int argc, char *argv[]) {
     stbi_image_free(dataA);
     stbi_image_free(dataB);
 
-    printf("Wrote LUT to %s\n", outcube);
+    // End timing
+    if (clock_gettime(CLOCK_MONOTONIC, &t_end) != 0) {
+        perror("clock_gettime (end)");
+    } else {
+        long sec = t_end.tv_sec - t_start.tv_sec;
+        long nsec = t_end.tv_nsec - t_start.tv_nsec;
+        if (nsec < 0) {
+            sec -= 1;
+            nsec += 1000000000L;
+        }
+        double elapsed = (double)sec + (double)nsec / 1e9;
+        printf("Elapsed time: %.3f seconds\n", elapsed);
+    }
+
     return 0;
 }
+
 
