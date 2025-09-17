@@ -2590,5 +2590,3 @@ Great to hear everything’s sorted! If you need help with anything else — tes
 Copy Markdown
 
 Firefox Extension: https://save.hugocollin.com/
-
-https://chatgpt.com/share/68ca8c3d-580c-800a-8e78-2f89ff5ace5f
