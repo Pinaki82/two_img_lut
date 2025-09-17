@@ -27,7 +27,7 @@ Generate a 3D LUT (.cube) file by comparing two images: a source image and a col
 - Linux operating system.  
 - GCC (or a C compiler) supporting C11.  
 - Math library (`libm`) available.  
-- `stb_image.h` and `stb_image_write.h` placed under `external/stb/` (or wherever included via the Makefile).
+- `stb_image.h` and `stb_image_write.h` [from [GitHub - nothings/stb: stb single-file public domain libraries for C/C++](https://github.com/nothings/stb.git)] placed under `external/stb/` (or wherever included via the Makefile).
 
 ---
 
