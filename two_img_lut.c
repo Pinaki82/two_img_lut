@@ -1,7 +1,11 @@
 // lutgen.c
 // gcc -g -std=c11 -Wall -Wextra -pedantic two_img_lut.c -o two_img_lut -lm
 // ./two_img_lut source.png target.png lut_size output.cube
-// Example: ./two_img_lut mpv-shot0001.png mpv-shot0001-corrected.png 33 00010.cube
+// Example:
+// ./two_img_lut mpv-shot0001.png mpv-shot0001-corrected.png 00010.cube
+// Or,
+// ./two_img_lut mpv-shot0001.png mpv-shot0001-corrected.png 33 00010.cube
+
 #define _POSIX_C_SOURCE 199309L
 
 #include <stdio.h>
@@ -18,6 +22,8 @@
 #include "stb-master/stb_image_write.h"
 #include "lutgen.h"
 
+#define DEFAULT_LUT_SIZE 33
+
 typedef struct {
     double r, g, b;
     double w;
@@ -30,16 +36,31 @@ static int clamp_int(int x, int lo, int hi) {
 }
 
 int main(int argc, char *argv[]) {
-    if (argc != 5) {
-        fprintf(stderr, "Usage: %s source.png target.png lut_size output.cube\n", argv[0]);
+ const char *pathA, *pathB, *outcube;
+    int N;
+
+    if (argc == 4) {
+        // no explicit lut size; use default
+        pathA = argv[1];
+        pathB = argv[2];
+        N = DEFAULT_LUT_SIZE;
+        outcube = argv[3];
+    }
+    else if (argc == 5) {
+        pathA = argv[1];
+        pathB = argv[2];
+        N = atoi(argv[3]);
+        outcube = argv[4];
+    }
+    else {
+        fprintf(stderr,
+            "Usage: %s source.png target.png [lut_size] output.cube\n",
+            argv[0]);
         return 1;
     }
-    const char *pathA = argv[1];
-    const char *pathB = argv[2];
-    int N = atoi(argv[3]);
-    const char *outcube = argv[4];
+
     if (N < 2) {
-        fprintf(stderr, "lut_size must be >= 2\n");
+        fprintf(stderr, "lut_size must be >= 2 (you passed %d)\n", N);
         return 1;
     }
 
